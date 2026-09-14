@@ -97,7 +97,7 @@ function parseDate(v, what = 'date') {
   if (slash) {
     const a = Number(slash[1]);
     const b = Number(slash[2]);
-    const [day, month] = a > 12 ? [a, b] : [b, a];
+    const [day, month] = b > 12 ? [b, a] : [a, b];
     const year = slash[3].length === 2 ? `20${slash[3]}` : slash[3];
     return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
