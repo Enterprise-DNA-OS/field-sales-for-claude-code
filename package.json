@@ -6,11 +6,14 @@
   "license": "MIT",
   "author": "Enterprise DNA (https://www.enterprisedna.co)",
   "repository": "github:Enterprise-DNA-OS/field-sales-for-claude-code",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "migrate": "node scripts/migrate.mjs",
     "seed": "node scripts/seed.mjs",
-    "demo": "node scripts/migrate.mjs && node scripts/seed.mjs",
+    "field": "node scripts/field.mjs",
+    "demo": "node scripts/migrate.mjs && node scripts/seed.mjs && node scripts/field.mjs call-cycle --due && node scripts/field.mjs attention && node scripts/field.mjs rep-week",
     "view": "node scripts/view.mjs",
     "docs": "node scripts/docs.mjs",
     "test": "node scripts/smoke.mjs"

@@ -1,11 +1,81 @@
 [
   {
-    "name": "example",
-    "title": "TODO(author): the first document this industry must produce",
-    "for_each": "select gen_random_uuid() as id, 'Example' as name",
+    "name": "outlet-visit-summary",
+    "title": "Outlet visit summary",
+    "for_each": "select v.id, (o.code || ' ' || o.name || ' ' || to_char(v.visited_on, 'YYYY-MM-DD')) as name from visits v join outlets o on o.id = v.outlet_id where v.status = 'completed' and v.visited_on >= current_date - 3 order by v.visited_on desc, o.code",
     "file": "name",
     "sections": [
-      { "title": "Details", "sql": "select 'replace me' as item, $1::text as record_id" }
+      {
+        "title": "The call",
+        "sql": "select o.code as outlet_code, o.name as outlet, coalesce(o.banner, '') as banner, coalesce(o.channel, '') as channel, coalesce(o.city, '') as city, coalesce(r.full_name, 'unassigned') as rep, v.visited_on as date, to_char(v.visited_on, 'Day') as weekday, v.duration_minutes as minutes_in_store, coalesce(v.purpose, '') as purpose, coalesce(v.notes, '') as notes, coalesce(v.no_order_reason, '') as no_order_reason from visits v join outlets o on o.id = v.outlet_id left join reps r on r.id = v.rep_id where v.id = $1"
+      },
+      {
+        "title": "Shelf and planogram",
+        "note": "Facings counted, shelf prices read off the ticket, and anything found empty or off planogram.",
+        "sql": "select p.sku, p.name as product, coalesce(p.unit_size, '') as size, sc.facings, to_char(sc.shelf_price_cents / 100.0, 'FM$990.00') as shelf_price, case when sc.out_of_stock then 'EMPTY' else 'in stock' end as availability, case when sc.planogram_ok then 'ok' else 'OFF PLANOGRAM' end as planogram, coalesce(sc.note, '') as note from shelf_checks sc join products p on p.id = sc.product_id where sc.visit_id = $1 order by p.sku"
+      },
+      {
+        "title": "Promotions checked",
+        "sql": "select pr.code, pr.name as promotion, pr.mechanic, coalesce(pr.required_display, '') as required_display, case when pc.display_present then 'up' else 'MISSING' end as display, case when pc.ticket_present then 'up' else 'MISSING' end as shelf_ticket, to_char(pc.ticket_price_cents / 100.0, 'FM$990.00') as ticket_price, to_char(pr.promo_price_cents / 100.0, 'FM$990.00') as should_be, case when pc.price_correct then 'correct' else 'WRONG' end as price, coalesce(pc.photo_ref, '') as photo, coalesce(pc.note, '') as note from promo_checks pc join promotions pr on pr.id = pc.promotion_id where pc.visit_id = $1 order by pr.code"
+      },
+      {
+        "title": "The order",
+        "sql": "select o.order_no as order_number, p.sku, p.name as product, l.quantity as cases, p.case_size as units_per_case, to_char(l.unit_price_cents / 100.0, 'FM$999,990.00') as case_price, coalesce(pr.code, '') as promotion, to_char(l.line_total_cents / 100.0, 'FM$999,990.00') as line_total from orders o join order_lines l on l.order_id = o.id join products p on p.id = l.product_id left join promotions pr on pr.id = l.promotion_id where o.visit_id = $1 order by p.sku"
+      },
+      {
+        "title": "Left to do",
+        "sql": "select kind, title, status, coalesce(result_note, '') as note from visit_tasks where visit_id = $1 and status <> 'done' order by created_at"
+      }
+    ]
+  },
+  {
+    "name": "rep-weekly-report",
+    "title": "Rep weekly report",
+    "for_each": "select r.id, r.full_name as name from reps r where r.active order by r.full_name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The seven days behind",
+        "sql": "select rep, coalesce(territory, '') as territory, calls_completed as calls_completed, calls_missed as calls_missed, calls_planned as calls_planned, calls_overdue as calls_overdue, orders_taken as orders, strike_rate_pct || '%' as strike_rate, to_char(avg_order_cents / 100.0, 'FM$999,990.00') as average_order, to_char(order_value_cents / 100.0, 'FM$999,999,990') as week_value, avg_minutes_in_store as minutes_per_call, promo_checks_done as promotion_checks from v_rep_week where rep_id = $1"
+      },
+      {
+        "title": "Month to date against target",
+        "sql": "select t.metric, t.target_value as target, case t.metric when 'sales_value' then (select coalesce(sum(vt.total_cents), 0) / 100.0 from v_order_totals vt where vt.rep_id = t.rep_id and vt.status <> 'cancelled' and vt.ordered_on >= date_trunc('month', current_date)::date) when 'calls' then (select count(*) from visits v where v.rep_id = t.rep_id and v.status = 'completed' and v.visited_on >= date_trunc('month', current_date)::date) else 0 end as actual, coalesce(t.notes, '') as notes from targets t where t.rep_id = $1 and t.period_month = date_trunc('month', current_date)::date order by t.metric"
+      },
+      {
+        "title": "Call by call",
+        "sql": "select coalesce(v.visited_on, v.planned_on) as date, o.code as outlet_code, o.name as outlet, v.status, v.duration_minutes as minutes, coalesce(t.order_no, '') as order_number, coalesce(to_char(t.total_cents / 100.0, 'FM$999,990.00'), '') as order_value, coalesce(v.no_order_reason, '') as no_order_reason from visits v join outlets o on o.id = v.outlet_id left join v_order_totals t on t.visit_id = v.id where v.rep_id = $1 and coalesce(v.visited_on, v.planned_on) >= current_date - 6 order by coalesce(v.visited_on, v.planned_on) desc"
+      },
+      {
+        "title": "Calls now overdue",
+        "note": "Outlets on this territory past their call cycle. These are the first calls of next week.",
+        "sql": "select outlet_code as code, outlet, frequency_days || ' days' as cycle, last_visit_on as last_call, due_on as was_due, days_overdue || ' days late' as late, to_char(value_90_cents / 100.0, 'FM$999,999,990') as value_90_days from v_call_cycle_due where rep_id = $1 and days_overdue > 0 order by days_overdue desc"
+      },
+      {
+        "title": "What is wrong in store",
+        "sql": "select pc.checked_on as checked, pr.code as promotion, o.name as outlet, case when pc.display_present then 'up' else 'MISSING' end as display, case when pc.ticket_present then 'up' else 'MISSING' end as ticket, to_char(pc.ticket_price_cents / 100.0, 'FM$990.00') as ticket_price, to_char(pr.promo_price_cents / 100.0, 'FM$990.00') as should_be from promo_checks pc join promotions pr on pr.id = pc.promotion_id join outlets o on o.id = pc.outlet_id where o.rep_id = $1 and pr.ends_on >= current_date and pc.checked_on >= current_date - 28 and (not pc.price_correct or not pc.display_present) order by pc.checked_on desc"
+      }
+    ]
+  },
+  {
+    "name": "order-confirmation",
+    "title": "Order confirmation",
+    "for_each": "select o.id, o.order_no as name from orders o where o.ordered_on >= current_date - 3 and o.status <> 'cancelled' order by o.ordered_on desc, o.order_no",
+    "file": "name",
+    "sections": [
+      {
+        "title": "Order",
+        "sql": "select o.order_no as order_number, ou.code as outlet_code, ou.name as deliver_to, coalesce(ou.address, '') as address, coalesce(ou.suburb, '') as suburb, coalesce(ou.city, '') as city, o.ordered_on as ordered, o.delivery_on as delivery_date, coalesce(o.po_number, '') as purchase_order, o.status, coalesce(r.full_name, '') as rep, coalesce(pl.name, 'list price') as price_list, ou.payment_terms_days || ' days' as payment_terms from orders o join outlets ou on ou.id = o.outlet_id left join reps r on r.id = o.rep_id left join price_lists pl on pl.id = o.price_list_id where o.id = $1"
+      },
+      {
+        "title": "Lines",
+        "sql": "select p.sku, p.name as product, coalesce(p.unit_size, '') as size, p.case_size as units_per_case, l.quantity as cases, (l.quantity * p.case_size) as units, to_char(l.unit_price_cents / 100.0, 'FM$999,990.00') as case_price, coalesce(pr.code, '') as promotion, to_char(l.line_total_cents / 100.0, 'FM$999,990.00') as line_total from order_lines l join products p on p.id = l.product_id left join promotions pr on pr.id = l.promotion_id where l.order_id = $1 order by p.sku"
+      },
+      {
+        "title": "Total",
+        "note": "All amounts exclude GST.",
+        "sql": "select count(*) as lines, sum(l.quantity) as cases, to_char(sum(l.line_total_cents) / 100.0, 'FM$999,999,990.00') as total_ex_gst, to_char(sum(l.line_total_cents) * 0.15 / 100.0, 'FM$999,999,990.00') as gst_15_percent, to_char(sum(l.line_total_cents) * 1.15 / 100.0, 'FM$999,999,990.00') as total_inc_gst from order_lines l where l.order_id = $1"
+      }
     ]
   }
 ]

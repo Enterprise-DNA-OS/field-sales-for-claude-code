@@ -14,6 +14,23 @@ export function money(cents, currency = 'NZD') {
   }
 }
 
+// $19.99, not $20. Shelf prices, unit prices and anything a person reads off a ticket.
+export function price(cents, currency = 'NZD') {
+  if (cents === null || cents === undefined || cents === '') return '';
+  const n = Number(cents) / 100;
+  try {
+    return new Intl.NumberFormat('en-NZ', {
+      style: 'currency',
+      currency,
+      currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `${currency} ${n.toFixed(2)}`;
+  }
+}
+
 // 135 -> "2.25h". Minutes are the storage unit; hours are how people talk.
 export function hours(minutes) {
   const m = Number(minutes || 0);

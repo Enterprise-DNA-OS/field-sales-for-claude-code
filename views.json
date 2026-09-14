@@ -1,13 +1,55 @@
 [
   {
     "name": "week",
-    "title": "This week",
-    "subtitle": "Field Sales for Claude Code: what needs attention, rendered by npm run view",
+    "title": "The week",
+    "subtitle": "Field Sales for Claude Code: the journey plan, what is late, and what is wrong in store. Rendered by npm run view.",
     "sections": [
       {
         "title": "Needs attention",
-        "note": "TODO(author): point this at the industry's attention view (overdue, stuck, quiet).",
-        "sql": "select 'replace me' as item, 'TODO(author)' as why"
+        "note": "Overdue calls, promotions wrong in store, credits nobody has authorised, orders that never reached the ERP.",
+        "sql": "select case reason when 'call_overdue' then 'Call overdue' when 'promo_breach' then 'Promotion wrong in store' when 'order_unsent' then 'Order not in the ERP' when 'return_unauthorised' then 'Credit waiting on authorisation' when 'outlet_quiet' then 'Outlet has gone quiet' when 'out_of_stock' then 'Out of stock on shelf' else reason end as what, label as record, outlet, rep, days, case when amount_cents > 0 then to_char(amount_cents / 100.0, 'FM$999,999,990.00') else '' end as value, detail from v_attention_due order by case reason when 'promo_breach' then 1 when 'return_unauthorised' then 2 when 'order_unsent' then 3 when 'call_overdue' then 4 when 'outlet_quiet' then 5 else 6 end, days desc"
+      },
+      {
+        "title": "Call cycle: who is due",
+        "note": "Every outlet on a cycle, sorted by how late the call is.",
+        "sql": "select outlet_code as code, outlet, rep, territory, frequency_days || 'd' as every, last_visit_on as last_call, due_on as due, case when days_overdue > 0 then days_overdue || ' days late' when days_overdue = 0 then 'today' else 'in ' || (-days_overdue) || ' days' end as status, to_char(value_90_cents / 100.0, 'FM$999,999,990') as value_90_days from v_call_cycle_due order by days_overdue desc, sequence"
+      },
+      {
+        "title": "The reps, last seven days",
+        "sql": "select rep, territory, calls_completed as calls, calls_missed as missed, calls_overdue as overdue, orders_taken as orders, strike_rate_pct || '%' as strike_rate, to_char(avg_order_cents / 100.0, 'FM$999,990') as avg_order, to_char(order_value_cents / 100.0, 'FM$999,999,990') as week_value, to_char(month_value_cents / 100.0, 'FM$999,999,990') as month_to_date, avg_minutes_in_store as mins_per_call from v_rep_week order by order_value_cents desc"
+      },
+      {
+        "title": "Promotion compliance",
+        "note": "Live promotions and what the reps found on the shelf. A price breach is a ticket that does not match the promoted price.",
+        "sql": "select code, promotion, mechanic, ends_on as ends, to_char(promo_price_cents / 100.0, 'FM$990.00') as promo_price, to_char(was_price_cents / 100.0, 'FM$990.00') as was_price, checks, outlets_checked as outlets, coalesce(display_pct || '%', 'not checked') as display_up, coalesce(compliance_pct || '%', 'not checked') as price_correct, price_breaches as breaches, coalesce(funding_agreement_ref, 'NONE ON FILE') as funding_agreement from v_promo_compliance where ends_on >= current_date order by starts_on"
+      },
+      {
+        "title": "Orders waiting to reach the ERP",
+        "sql": "select t.order_no as order_number, o.code as outlet_code, o.name as outlet, t.ordered_on as ordered, (current_date - t.ordered_on) || ' days' as waiting, t.units as cases, to_char(t.total_cents / 100.0, 'FM$999,999,990.00') as value, coalesce(t.po_number, '') as po from v_order_totals t join outlets o on o.id = t.outlet_id where t.status in ('draft', 'submitted') order by t.ordered_on"
+      },
+      {
+        "title": "Empty shelves found in the last two weeks",
+        "sql": "select sc.checked_on as checked, o.code as outlet_code, o.name as outlet, p.sku, p.name as product, coalesce(r.full_name, '') as rep from shelf_checks sc join outlets o on o.id = sc.outlet_id join products p on p.id = sc.product_id left join reps r on r.id = o.rep_id where sc.out_of_stock and sc.checked_on >= current_date - 14 order by sc.checked_on desc, o.code"
+      }
+    ]
+  },
+  {
+    "name": "territory",
+    "title": "Territories",
+    "subtitle": "Coverage, value and distribution by territory. Rendered by npm run view.",
+    "sections": [
+      {
+        "title": "Every territory",
+        "sql": "select t.name as territory, coalesce(t.code, '') as code, coalesce(t.region, '') as region, coalesce(t.manager, '') as manager, (select count(*) from reps r where r.territory_id = t.id and r.active) as reps, (select count(*) from outlets o where o.territory_id = t.id and o.status = 'active') as outlets, (select count(*) from v_call_cycle_due d where d.territory = t.name and d.days_overdue > 0) as calls_late, to_char((select coalesce(sum(vt.total_cents), 0) from v_order_totals vt join outlets o2 on o2.id = vt.outlet_id where o2.territory_id = t.id and vt.status <> 'cancelled' and vt.ordered_on >= current_date - 90) / 100.0, 'FM$999,999,990') as value_90_days from territories t order by t.name"
+      },
+      {
+        "title": "Outlets, best to worst on ninety day value",
+        "sql": "select coalesce(h.territory, 'unassigned') as territory, h.outlet_code as code, h.outlet, h.channel, coalesce(h.rep, '') as rep, coalesce(h.days_since_visit || 'd', 'never') as last_call, coalesce(h.days_since_order || 'd', 'never') as last_order, h.orders_90 as orders, to_char(h.value_90_cents / 100.0, 'FM$999,999,990') as value_90_days, coalesce(case when h.trend_pct > 0 then '+' else '' end || h.trend_pct || '%', '') as trend, h.oos_30 as empty_shelves, h.open_returns as open_credits from v_outlet_health h where h.status = 'active' order by coalesce(h.territory, 'zz'), h.value_90_cents desc"
+      },
+      {
+        "title": "Distribution: how many outlets carry each line",
+        "note": "Cases and value are the last ninety days. Distribution is the share of active outlets that ordered it at least once.",
+        "sql": "select p.sku, p.name as product, coalesce(p.brand, '') as brand, coalesce(p.category, '') as category, count(distinct o.outlet_id) as outlets, round(count(distinct o.outlet_id) * 100.0 / nullif((select count(*) from outlets where status = 'active'), 0)) || '%' as distribution, coalesce(sum(l.quantity), 0) as cases, to_char(coalesce(sum(l.line_total_cents), 0) / 100.0, 'FM$999,999,990') as value from products p left join order_lines l on l.product_id = p.id left join orders o on o.id = l.order_id and o.status <> 'cancelled' and o.ordered_on >= current_date - 90 where p.active group by p.sku, p.name, p.brand, p.category order by coalesce(sum(l.line_total_cents), 0) desc"
       }
     ]
   }
